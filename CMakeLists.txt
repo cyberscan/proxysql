@@ -1,0 +1,628 @@
+cmake_minimum_required(VERSION 3.16.3)
+
+if(NOT DEFINED GIT_VERSION)
+    execute_process(
+        COMMAND git describe --long
+        OUTPUT_VARIABLE GIT_VERSION
+        OUTPUT_QUIET
+    )
+endif()
+
+project(
+    ProxySQL
+    VERSION GIT_VERSION
+    LANGUAGES C CXX
+)
+
+if(NOT DEFINED CURVER)
+    # TODO: Not sure if this is right?
+    set(CURVER 2.0.15)
+endif()
+
+# TODO
+#set(CMAKE_CXX_STANDARD 14 CACHE STRING "C++ standard to conform to")
+#set(CMAKE_CXX_STANDARD_REQUIRED YES)
+#if (NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+#  message(STATUS "No build type selected, default to Debug")
+#  set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type (default Debug)" FORCE)
+#endif()
+
+add_subdirectory(src)
+add_subdirectory(include)
+add_subdirectory(lib)
+add_subdirectory(deps)
+# TODO
+#add_subdirectory(test)
+
+set(
+    EXTRALINK ""
+    CACHE STRING "Description: TODO"
+)
+
+set(
+    ALL_DEBUG "-ggdb -DDEBUG"
+    CACHE STRING "Description: TODO"
+)
+set(
+    DEBUG ALL_DEBUG
+    CACHE STRING "Description: TODO"
+)
+set(
+    NO_DEBUG ""
+    CACHE STRING "Description: TODO"
+)
+
+# Optimization levels, left here for backwards compat
+set(O0 "-O0")
+set(O1 "-O1")
+set(O2 "-O2")
+set(O3 "-O3 -mtune=native")
+
+# TODO
+#export MAKE
+
+if(NOT DEFINED DISTRO)
+    execute_process(
+        COMMAND lsb_release -is
+        OUTPUT_VARIABLE DISTRO
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        OUTPUT_QUIET
+        ERROR_QUIET
+    )
+    if(NOT DEFINED DISTRO)
+        set(
+            DISTRO "Unknown"
+        )
+    endif()
+endif()
+
+if(NOT DEFINED OS)
+    execute_process(
+        COMMAND uname -s
+        OUTPUT_VARIABLE OS
+        OUTPUT_QUIET
+        ERROR_QUIET
+    )
+endif()
+
+if(NOT DEFINED NPROCS)
+    if(OS STREQUAL "Linux")
+        execute_process(
+            COMMAND nproc
+            OUTPUT_VARIABLE NPROCS
+        )
+    elseif(OS STREQUAL "Darwin")
+        execute_process(
+            COMMAND sysctl -n hw.ncpu
+            OUTPUT_VARIABLE NPROCS
+        )
+    endif()
+    if(NOT DEFINED NPROCS)
+        set(NPROCS 1)
+    endif()
+endif()
+
+set(MAKEOPT "-j ${NPROCS}")
+
+if(NOT DEFINED SYSTEMD)
+    if(EXISTS "/usr/lib/systemd/system" OR EXISTS "/usr/lib/systemd/system")
+        set(SYSTEMD 1)
+    else()
+        set(SYSTEMD 0)
+    endif()
+endif()
+
+if (NOT DEFINED USERCHECK)
+    execute_process(
+        COMMAND getent passwd proxysql
+        OUTPUT_VARIABLE USERCHECK
+        OUTPUT_QUIET
+    )
+endif()
+
+if (NOT DEFINED GROUPCHECK)
+    execute_process(
+        COMMAND getent group proxysql
+        OUTPUT_VARIABLE GROUPCHECK
+        OUTPUT_QUIET
+    )
+endif()
+
+.PHONY: default
+default: build_deps build_lib build_src
+
+.PHONY: debug
+debug: build_deps_debug build_lib_debug build_src_debug
+
+.PHONY: testaurora
+testaurora: build_deps_debug build_lib_testaurora build_src_testaurora
+	cd test/tap && OPTZ="${O0} -ggdb -DDEBUG -DTEST_AURORA" CC=${CC} CXX=${CXX} ${MAKE}
+	cd test/tap/tests && OPTZ="${O0} -ggdb -DDEBUG -DTEST_AURORA" CC=${CC} CXX=${CXX} ${MAKE} $(MAKECMDGOALS)
+
+.PHONY: testgalera
+testgalera: build_deps_debug build_lib_testgalera build_src_testgalera
+	cd test/tap && OPTZ="${O0} -ggdb -DDEBUG -DTEST_GALERA" CC=${CC} CXX=${CXX} ${MAKE}
+	cd test/tap/tests && OPTZ="${O0} -ggdb -DDEBUG -DTEST_GALERA" CC=${CC} CXX=${CXX} ${MAKE} $(MAKECMDGOALS)
+
+.PHONY: testgrouprep
+testgrouprep: build_deps_debug build_lib_testgrouprep build_src_testgrouprep
+
+.PHONY: testall
+testall: build_deps_debug build_lib_testall build_src_testall
+
+.PHONY: clickhouse
+clickhouse: build_deps_clickhouse build_lib_clickhouse build_src_clickhouse
+
+.PHONY: debug_clickhouse
+debug_clickhouse: build_deps_debug_clickhouse build_lib_debug_clickhouse build_src_debug_clickhouse
+
+
+.PHONY: build_deps
+build_deps:
+	cd deps && OPTZ="${O2} -ggdb" CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_lib
+build_lib: build_deps
+	cd lib && OPTZ="${O2} -ggdb" CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_src
+build_src: build_deps build_lib
+	cd src && OPTZ="${O2} -ggdb" CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_deps_debug
+build_deps_debug:
+	cd deps && OPTZ="${O0} -ggdb -DDEBUG" PROXYDEBUG=1 CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_lib_debug
+build_lib_debug: build_deps_debug
+	cd lib && OPTZ="${O0} -ggdb -DDEBUG" CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_src_testaurora
+build_src_testaurora: build_deps build_lib_testaurora
+	cd src && OPTZ="${O0} -ggdb -DDEBUG -DTEST_AURORA" CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_lib_testaurora
+build_lib_testaurora: build_deps_debug
+	cd lib && OPTZ="${O0} -ggdb -DDEBUG -DTEST_AURORA" CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_src_testgalera
+build_src_testgalera: build_deps build_lib_testgalera
+	cd src && OPTZ="${O0} -ggdb -DDEBUG -DTEST_GALERA" CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_lib_testgalera
+build_lib_testgalera: build_deps_debug
+	cd lib && OPTZ="${O0} -ggdb -DDEBUG -DTEST_GALERA" CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_src_testgrouprep
+build_src_testgrouprep: build_deps build_lib_testgrouprep
+	cd src && OPTZ="${O0} -ggdb -DDEBUG -DTEST_GROUPREP" CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_lib_testgrouprep
+build_lib_testgrouprep: build_deps_debug
+	cd lib && OPTZ="${O0} -ggdb -DDEBUG -DTEST_GROUPREP" CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_src_testall
+build_src_testall: build_deps build_lib_testall
+	cd src && OPTZ="${O0} -ggdb -DDEBUG -DTEST_AURORA -DTEST_GALERA -DTEST_GROUPREP" CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_lib_testall
+build_lib_testall: build_deps_debug
+	cd lib && OPTZ="${O0} -ggdb -DDEBUG -DTEST_AURORA -DTEST_GALERA -DTEST_GROUPREP" CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_tap_test
+build_tap_test: build_src
+	cd test/tap && OPTZ="${O0} -ggdb -DDEBUG" CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_src_debug
+build_src_debug: build_deps build_lib_debug
+	cd src && OPTZ="${O0} -ggdb -DDEBUG" CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_deps_clickhouse
+build_deps_clickhouse:
+	cd deps && OPTZ="${O2} -ggdb" PROXYSQLCLICKHOUSE=1 CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_deps_debug_clickhouse
+build_deps_debug_clickhouse:
+	cd deps && OPTZ="${O0} -ggdb -DDEBUG" PROXYSQLCLICKHOUSE=1 PROXYDEBUG=1 CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_lib_clickhouse
+build_lib_clickhouse: build_deps_clickhouse
+	cd lib && OPTZ="${O2} -ggdb" PROXYSQLCLICKHOUSE=1 CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_lib_debug_clickhouse
+build_lib_debug_clickhouse: build_deps_debug_clickhouse
+	cd lib && OPTZ="${O0} -ggdb -DDEBUG" PROXYSQLCLICKHOUSE=1 CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_src_clickhouse
+build_src_clickhouse: build_deps_clickhouse build_lib_clickhouse
+	cd src && OPTZ="${O2} -ggdb" PROXYSQLCLICKHOUSE=1 CC=${CC} CXX=${CXX} ${MAKE}
+
+.PHONY: build_src_debug_clickhouse
+build_src_debug_clickhouse: build_deps build_lib_debug_clickhouse
+	cd src && OPTZ="${O0} -ggdb -DDEBUG" PROXYSQLCLICKHOUSE=1 CC=${CC} CXX=${CXX} ${MAKE}
+
+
+.PHONY: clean
+clean:
+	cd lib && ${MAKE} clean
+	cd src && ${MAKE} clean
+	cd test/tap && ${MAKE} clean
+
+packages: amd64-packages arm64-packages
+.PHONY: packages
+
+amd64-packages: centos6.7 centos6.7-dbg centos7 centos7-dbg centos8 centos8-dbg ubuntu14 ubuntu14-dbg ubuntu16 ubuntu16-dbg ubuntu18 ubuntu18-dbg ubuntu20 ubuntu20-dbg debian8 debian8-dbg debian9 debian9-dbg debian10 debian10-dbg fedora24 fedora24-dbg fedora27 fedora27-dbg fedora28 fedora28-dbg
+.PHONY: amd64-packages
+
+arm64-packages: centos7-arm64 centos8-arm64 debian9-arm64 debian10-arm64 ubuntu18-arm64 ubuntu20-arm64 fedora32-arm64
+.PHONY: arm64-packages
+
+centos5: binaries/proxysql-${CURVER}-1-centos5.x86_64.rpm
+.PHONY: centos5
+
+centos5-dbg: binaries/proxysql-${CURVER}-1-dbg-centos5.x86_64.rpm
+.PHONY: centos5-dbg
+
+centos6.7: binaries/proxysql-${CURVER}-1-centos67.x86_64.rpm
+.PHONY: centos6.7
+
+centos7: binaries/proxysql-${CURVER}-1-centos7.x86_64.rpm
+.PHONY: centos7
+
+centos7-arm64: binaries/proxysql-${CURVER}-1-centos7.aarch64.rpm
+.PHONY: centos7-arm64
+
+centos8: binaries/proxysql-${CURVER}-1-centos8.x86_64.rpm
+.PHONY: centos8
+
+centos8-arm64: binaries/proxysql-${CURVER}-1-centos8.aarch64.rpm
+.PHONY: centos8-arm64
+
+centos6.7-dbg: binaries/proxysql-${CURVER}-1-dbg-centos67.x86_64.rpm
+.PHONY: centos6.7-dbg
+
+centos7-dbg: binaries/proxysql-${CURVER}-1-dbg-centos7.x86_64.rpm
+.PHONY: centos7-dbg
+
+centos8-dbg: binaries/proxysql-${CURVER}-1-dbg-centos8.x86_64.rpm
+.PHONY: centos8-dbg
+
+fedora24: binaries/proxysql-${CURVER}-1-fedora24.x86_64.rpm
+.PHONY: fedora24
+
+fedora24-dbg: binaries/proxysql-${CURVER}-1-dbg-fedora24.x86_64.rpm
+.PHONY: fedora24-dbg
+
+fedora27: binaries/proxysql-${CURVER}-1-fedora27.x86_64.rpm
+.PHONY: fedora27
+
+fedora27-dbg: binaries/proxysql-${CURVER}-1-dbg-fedora27.x86_64.rpm
+.PHONY: fedora27-dbg
+
+fedora28: binaries/proxysql-${CURVER}-1-fedora28.x86_64.rpm
+.PHONY: fedora28
+
+fedora28-dbg: binaries/proxysql-${CURVER}-1-dbg-fedora28.x86_64.rpm
+.PHONY: fedora28-dbg
+
+fedora32-arm64: binaries/proxysql-${CURVER}-1-fedora32.aarch64.rpm
+.PHONY: fedora32-arm64
+
+ubuntu14: binaries/proxysql_${CURVER}-ubuntu14_amd64.deb
+.PHONY: ubuntu14
+
+ubuntu16: binaries/proxysql_${CURVER}-ubuntu16_amd64.deb
+.PHONY: ubuntu16
+
+ubuntu18: binaries/proxysql_${CURVER}-ubuntu18_amd64.deb
+.PHONY: ubuntu18
+
+ubuntu20: binaries/proxysql_${CURVER}-ubuntu20_amd64.deb
+.PHONY: ubuntu20
+
+ubuntu18-arm64: binaries/proxysql_${CURVER}-ubuntu18_aarch64.deb
+.PHONY: ubuntu18-arm64
+
+ubuntu20-arm64: binaries/proxysql_${CURVER}-ubuntu20_aarch64.deb
+.PHONY: ubuntu20-arm64
+
+debian7: binaries/proxysql_${CURVER}-debian7_amd64.deb
+.PHONY: debian7
+
+debian8: binaries/proxysql_${CURVER}-debian8_amd64.deb
+.PHONY: debian8
+
+debian9: binaries/proxysql_${CURVER}-debian9_amd64.deb
+.PHONY: debian9
+
+debian10: binaries/proxysql_${CURVER}-debian10_amd64.deb
+.PHONY: debian10
+
+debian9-arm64: binaries/proxysql_${CURVER}-debian9_aarch64.deb
+.PHONY: debian9-arm64
+
+debian10-arm64: binaries/proxysql_${CURVER}-debian10_aarch64.deb
+.PHONY: debian10-arm64
+
+ubuntu14-dbg: binaries/proxysql_${CURVER}-dbg-ubuntu14_amd64.deb
+.PHONY: ubuntu14-dbg
+
+ubuntu16-dbg: binaries/proxysql_${CURVER}-dbg-ubuntu16_amd64.deb
+.PHONY: ubuntu16-dbg
+
+ubuntu18-dbg: binaries/proxysql_${CURVER}-dbg-ubuntu18_amd64.deb
+.PHONY: ubuntu18-dbg
+
+ubuntu20-dbg: binaries/proxysql_${CURVER}-dbg-ubuntu20_amd64.deb
+.PHONY: ubuntu20-dbg
+
+debian7-dbg: binaries/proxysql_${CURVER}-dbg-debian7_amd64.deb
+.PHONY: debian7-dbg
+
+debian8-dbg: binaries/proxysql_${CURVER}-dbg-debian8_amd64.deb
+.PHONY: debian8-dbg
+
+debian9-dbg: binaries/proxysql_${CURVER}-dbg-debian9_amd64.deb
+.PHONY: debian9-dbg
+
+debian9.4: binaries/proxysql_${CURVER}-debian9.4_amd64.deb
+.PHONY: debian9.4
+
+debian9.4-dbg: binaries/proxysql_${CURVER}-dbg-debian9.4_amd64.deb
+.PHONY: debian9.4-dbg
+
+debian10-dbg: binaries/proxysql_${CURVER}-dbg-debian10_amd64.deb
+.PHONY: debian10-dbg
+
+binaries/proxysql-${CURVER}-1-centos5.x86_64.rpm:
+	docker-compose up centos5_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-dbg-centos5.x86_64.rpm:
+	docker-compose up centos5_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-centos67.x86_64.rpm:
+	docker-compose up centos67_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-dbg-centos67.x86_64.rpm:
+	docker-compose up centos67_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-centos7.x86_64.rpm:
+	docker-compose up centos7_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-centos7.aarch64.rpm:
+	docker-compose up centos7_arm64_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-dbg-centos7.x86_64.rpm:
+	docker-compose up centos7_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-centos8.x86_64.rpm:
+	docker-compose up centos8_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-dbg-centos8.x86_64.rpm:
+	docker-compose up centos8_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-centos8.aarch64.rpm:
+	docker-compose up centos8_arm64_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-fedora24.x86_64.rpm:
+	docker-compose up fedora24_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-dbg-fedora24.x86_64.rpm:
+	docker-compose up fedora24_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-fedora27.x86_64.rpm:
+	docker-compose up fedora27_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-fedora32.aarch64.rpm:
+	docker-compose up fedora32_arm64_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-dbg-fedora27.x86_64.rpm:
+	docker-compose up fedora27_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-fedora28.x86_64.rpm:
+	docker-compose up fedora28_build
+	docker-compose rm -f
+
+binaries/proxysql-${CURVER}-1-dbg-fedora28.x86_64.rpm:
+	docker-compose up fedora28_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-ubuntu12_amd64.deb:
+	docker-compose up ubuntu12_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-ubuntu14_amd64.deb:
+	docker-compose up ubuntu14_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-ubuntu16_amd64.deb:
+	docker-compose up ubuntu16_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-ubuntu18_amd64.deb:
+	docker-compose up ubuntu18_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-ubuntu20_amd64.deb:
+	docker-compose up ubuntu20_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-ubuntu18_aarch64.deb:
+	docker-compose up ubuntu18_arm64_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-ubuntu20_aarch64.deb:
+	docker-compose up ubuntu20_arm64_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-debian7_amd64.deb:
+	docker-compose up debian7_build
+	#docker-compose rm -f
+
+binaries/proxysql_${CURVER}-debian8_amd64.deb:
+	docker-compose up debian8_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-debian9_amd64.deb:
+	docker-compose up debian9_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-debian9_aarch64.deb:
+	docker-compose up debian9_arm64_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-debian9.4_amd64.deb:
+	docker-compose up debian9_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-debian10_amd64.deb:
+	docker-compose up debian10_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-debian10_aarch64.deb:
+	docker-compose up debian10_arm64_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-dbg-ubuntu14_amd64.deb:
+	docker-compose up ubuntu14_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-dbg-ubuntu16_amd64.deb:
+	docker-compose up ubuntu16_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-dbg-ubuntu18_amd64.deb:
+	docker-compose up ubuntu18_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-dbg-ubuntu20_amd64.deb:
+	docker-compose up ubuntu20_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-dbg-debian7_amd64.deb:
+	docker-compose up debian7_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-dbg-debian8_amd64.deb:
+	docker-compose up debian8_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-dbg-debian9_amd64.deb:
+	docker-compose up debian9_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-dbg-debian9.4_amd64.deb:
+	docker-compose up debian9_dbg_build
+	docker-compose rm -f
+
+binaries/proxysql_${CURVER}-dbg-debian10_amd64.deb:
+	docker-compose up debian10_dbg_build
+	docker-compose rm -f
+
+.PHONY: cleanall
+cleanall:
+	cd deps && ${MAKE} cleanall
+	cd lib && ${MAKE} clean
+	cd src && ${MAKE} clean
+	rm binaries/*deb || true
+	rm binaries/*rpm || true
+
+.PHONY: cleanbuild
+cleanbuild:
+	cd deps && ${MAKE} cleanall
+	cd lib && ${MAKE} clean
+	cd src && ${MAKE} clean
+
+.PHONY: install
+install: src/proxysql
+	install -m 0755 src/proxysql /usr/bin
+	install -m 0600 etc/proxysql.cnf /etc
+	if [ ! -d /var/lib/proxysql ]; then mkdir /var/lib/proxysql ; fi
+ifeq ($(findstring proxysql,$(USERCHECK)),)
+	@echo "Creating proxysql user and group"
+	useradd -r -U -s /bin/false proxysql
+endif
+ifeq ($(SYSTEMD), 1)
+	install -m 0644 systemd/system/proxysql.service /usr/lib/systemd/system/
+	systemctl enable proxysql.service
+else
+	install -m 0755 etc/init.d/proxysql /etc/init.d
+ifeq ($(DISTRO),"CentOS Linux")
+		chkconfig --level 0123456 proxysql on
+else
+ifeq ($(DISTRO),"Red Hat Enterprise Linux Server")
+		chkconfig --level 0123456 proxysql on
+else
+ifeq ($(DISTRO),"Ubuntu")
+		update-rc.d proxysql defaults
+else
+ifeq ($(DISTRO),"Debian GNU/Linux")
+		update-rc.d proxysql defaults
+else
+ifeq ($(DISTRO),"Unknown")
+		$(warning Not sure how to install proxysql service on this OS)
+endif
+endif
+endif
+endif
+endif
+endif
+
+.PHONY: uninstall
+uninstall:
+	if [ -f /etc/proxysql.cnf ]; then rm /etc/proxysql.cnf ; fi
+	if [ -f /usr/bin/proxysql ]; then rm /usr/bin/proxysql ; fi
+	if [ -d /var/lib/proxysql ]; then rmdir /var/lib/proxysql 2>/dev/null || true ; fi
+ifeq ($(SYSTEMD), 1)
+		systemctl stop proxysql.service
+		if [ -f /usr/lib/systemd/system/proxysql.service ]; then rm /usr/lib/systemd/system/proxysql.service ; fi
+		find /etc/systemd -name "proxysql.service" -exec rm {} \;
+		systemctl daemon-reload
+else
+ifeq ($(DISTRO),"CentOS Linux")
+		chkconfig --level 0123456 proxysql off
+		if [ -f /etc/init.d/proxysql ]; then rm /etc/init.d/proxysql ; fi
+else
+ifeq ($(DISTRO),"Red Hat Enterprise Linux Server")
+		chkconfig --level 0123456 proxysql off
+		if [ -f /etc/init.d/proxysql ]; then rm /etc/init.d/proxysql ; fi
+else
+ifeq ($(DISTRO),"Ubuntu")
+		if [ -f /etc/init.d/proxysql ]; then rm /etc/init.d/proxysql ; fi
+		update-rc.d proxysql remove
+else
+ifeq ($(DISTRO),"Debian GNU/Linux")
+		if [ -f /etc/init.d/proxysql ]; then rm /etc/init.d/proxysql ; fi
+		update-rc.d proxysql remove
+else
+ifeq ($(DISTRO),"Unknown")
+		$(warning Not sure how to uninstall proxysql service on this OS)
+endif
+endif
+endif
+endif
+endif
+endif
+ifneq ($(findstring proxysql,$(USERCHECK)),)
+	@echo "Deleting proxysql user"
+	userdel proxysql
+endif
+ifneq ($(findstring proxysql,$(GROUPCHECK)),)
+	@echo "Deleting proxysql group"
+	groupdel proxysql
+endif
