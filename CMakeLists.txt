@@ -10,14 +10,16 @@ endif()
 
 project(
     ProxySQL
-    VERSION GIT_VERSION
-    LANGUAGES C CXX
+    VERSION "${GIT_VERSION}"
+    DESCRIPTION "High-performance MySQL proxy with a GPL license."
+    LANGUAGES CXX C
 )
 
-if(NOT DEFINED CURVER)
-    # TODO: Not sure if this is right?
-    set(CURVER 2.0.15)
-endif()
+# TODO: Not sure if this is right? should this default to GIT_VERSION?
+set(
+    CURVER "2.0.15" CACHE STRING
+    "Description: TODO"
+)
 
 # TODO
 #set(CMAKE_CXX_STANDARD 14 CACHE STRING "C++ standard to conform to")
@@ -27,29 +29,40 @@ endif()
 #  set(CMAKE_BUILD_TYPE "Debug" CACHE STRING "Build type (default Debug)" FORCE)
 #endif()
 
-add_subdirectory(src)
-add_subdirectory(include)
-add_subdirectory(lib)
-add_subdirectory(deps)
+# Backwards compat
+set(
+    OS "${CMAKE_HOST_SYSTEM_NAME}" CACHE STRING
+    "Description: TODO"
+)
+
+set(
+    DISTRO "Unknown" CACHE STRING
+    "Description: TODO"
+)
+if(DISTRO STREQUAL "Unknown")
+    execute_process(
+        COMMAND lsb_release -is || echo "Unknown"
+        OUTPUT_VARIABLE DISTRO
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        OUTPUT_QUIET
+        ERROR_QUIET
+    )
+endif()
+
+set(
+    EXTRALINK "" CACHE STRING
+    "Description: TODO"
+)
+
 # TODO
-#add_subdirectory(test)
+#set(
+#    ALL_DEBUG "-ggdb -DDEBUG" CACHE STRING
+#    "Debug build configuration."
+#)
 
-set(
-    EXTRALINK ""
-    CACHE STRING "Description: TODO"
-)
-
-set(
-    ALL_DEBUG "-ggdb -DDEBUG"
-    CACHE STRING "Description: TODO"
-)
-set(
-    DEBUG ALL_DEBUG
-    CACHE STRING "Description: TODO"
-)
-set(
-    NO_DEBUG ""
-    CACHE STRING "Description: TODO"
+option(
+    DEBUG OFF
+    "Produces a debug build."
 )
 
 # Optimization levels, left here for backwards compat
@@ -58,75 +71,85 @@ set(O1 "-O1")
 set(O2 "-O2")
 set(O3 "-O3 -mtune=native")
 
-# TODO
-#export MAKE
-
-if(NOT DEFINED DISTRO)
-    execute_process(
-        COMMAND lsb_release -is
-        OUTPUT_VARIABLE DISTRO
-        OUTPUT_STRIP_TRAILING_WHITESPACE
-        OUTPUT_QUIET
-        ERROR_QUIET
-    )
-    if(NOT DEFINED DISTRO)
-        set(
-            DISTRO "Unknown"
-        )
-    endif()
-endif()
-
-if(NOT DEFINED OS)
-    execute_process(
-        COMMAND uname -s
-        OUTPUT_VARIABLE OS
-        OUTPUT_QUIET
-        ERROR_QUIET
-    )
-endif()
-
-if(NOT DEFINED NPROCS)
+function(set_nprocs)
+    set(_NPROCS "1")
     if(OS STREQUAL "Linux")
         execute_process(
-            COMMAND nproc
-            OUTPUT_VARIABLE NPROCS
+            COMMAND nproc || echo "1"
+            OUTPUT_VARIABLE _NPROCS
         )
     elseif(OS STREQUAL "Darwin")
         execute_process(
-            COMMAND sysctl -n hw.ncpu
-            OUTPUT_VARIABLE NPROCS
+            COMMAND sysctl -n hw.ncpu || echo "1"
+            OUTPUT_VARIABLE _NPROCS
         )
     endif()
-    if(NOT DEFINED NPROCS)
-        set(NPROCS 1)
-    endif()
+    set(NPROCS _NPROCS PARENT_SCOPE)
+endfunction()
+
+set(
+    NPROCS CACHE STRING
+    "Run build with <NPROCS> concurrency, defaults to number of processor cores on Linux/OSX"
+)
+if(NOT DEFINED NPROCS)
+    set_nprocs()
 endif()
 
-set(MAKEOPT "-j ${NPROCS}")
+set(
+    MAKEOPT "-j ${NPROCS}" CACHE STRING
+    "Description: TODO"
+)
 
-if(NOT DEFINED SYSTEMD)
-    if(EXISTS "/usr/lib/systemd/system" OR EXISTS "/usr/lib/systemd/system")
-        set(SYSTEMD 1)
-    else()
-        set(SYSTEMD 0)
-    endif()
+if(EXISTS "/usr/lib/systemd/system")
+    set(_SYSTEMD ON)
+else()
+    set(_SYSTEMD OFF)
 endif()
 
-if (NOT DEFINED USERCHECK)
-    execute_process(
-        COMMAND getent passwd proxysql
-        OUTPUT_VARIABLE USERCHECK
-        OUTPUT_QUIET
-    )
-endif()
+option(
+    SYSTEMD
+    "Generate service unit definitions for systemd, defaults to ON if host system supports it."
+    ${_SYSTEMD}
+)
 
-if (NOT DEFINED GROUPCHECK)
-    execute_process(
-        COMMAND getent group proxysql
-        OUTPUT_VARIABLE GROUPCHECK
-        OUTPUT_QUIET
-    )
-endif()
+# TODO
+#execute_process(
+#    COMMAND getent passwd proxysql
+#    OUTPUT_VARIABLE USERCHECK
+#    OUTPUT_QUIET
+#)
+#execute_process(
+#    COMMAND getent group proxysql
+#    OUTPUT_VARIABLE GROUPCHECK
+#    OUTPUT_QUIET
+#)
+
+set(PROXYSQL_DEPS_DIR deps)
+add_subdirectory("${PROXYSQL_DEPS_DIR}")
+
+set(PROXYSQL_LIB_DIR lib)
+add_subdirectory("${PROXYSQL_LIB_DIR}")
+
+set(PROXYSQL_INCLUDE_DIR include)
+#add_subdirectory("${PROXYSQL_INCLUDE_DIR}")
+
+set(PROXYSQL_SRC_DIR src)
+# TODO: SQLite3_Server.cpp?
+add_executable(
+    proxysql
+    "${PROXYSQL_SRC_DIR}/proxysql_global.cpp"
+    "${PROXYSQL_SRC_DIR}/main.cpp"
+)
+target_include_directories(
+    proxysql
+    "${PROXYSQL_INCLUDE_DIR}"
+)
+
+
+
+# TODO
+#set(PROXYSQL_TEST_DIR test EXCLUDE_FROM_ALL)
+#add_subdirectory("${PROXYSQL_TEST_DIR}")
 
 .PHONY: default
 default: build_deps build_lib build_src
